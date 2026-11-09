@@ -381,7 +381,35 @@ async def send_results(chat_id, results, checked, gifts_unsupported, stopped):
         chunk += line + "\n"
     if chunk.strip():
         await bot.send_message(chat_id, chunk, link_preview=False, parse_mode=None)
+# ---------- поиск сообщений ----------
+async def search_messages(chat_id, query, limit=50):
+    await bot.send_message(chat_id, f"Ищу: {query}", parse_mode=None)
+    lines = []
+    try:
+        async for msg in client.iter_messages(None, search=query, limit=limit):
+            chat = msg.chat
+            title = getattr(chat, "title", None) or getattr(chat, "first_name", None) or "?"
+            link = message_link(chat, msg.id)
+            text = (msg.raw_text or "").replace("\n", " ")[:150]
+            lines.append(f"📌 {title}\n{text}\n{link}\n")
+            await asyncio.sleep(0.05)
+    except FloodWaitError as e:
+        await bot.send_message(chat_id, f"Telegram просит подождать {e.seconds} сек. Попробуй позже.")
+    except Exception as e:
+        await bot.send_message(chat_id, f"Ошибка поиска: {e}", parse_mode=None)
 
+    if not lines:
+        await bot.send_message(chat_id, "Ничего не найдено.", parse_mode=None)
+        return
+    await bot.send_message(chat_id, f"Найдено сообщений: {len(lines)}", parse_mode=None)
+    chunk = ""
+    for line in lines:
+        if len(chunk) + len(line) + 1 > 3500:
+            await bot.send_message(chat_id, chunk, link_preview=False, parse_mode=None)
+            chunk = ""
+        chunk += line + "\n"
+    if chunk.strip():
+        await bot.send_message(chat_id, chunk, link_preview=False, parse_mode=None)
 
 async def run_parser(chat_id):
     global running, stop_flag
@@ -554,8 +582,17 @@ async def stop_cmd(event):
         await event.respond("Останавливаю...")
     else:
         await event.respond("Проверка сейчас не идёт.")
-
-
+@bot.on(events.NewMessage(pattern=r"^/find(?:\s+(.+))?$"))
+async def find_cmd(event):
+    if not is_owner(event):
+        return
+    query = (event.pattern_match.group(1) or "").strip()
+    if not query:
+        await event.respond("Напиши так: /find слово или фраза", parse_mode=None)
+        return
+    task = asyncio.create_task(search_messages(event.chat_id, query))
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
 # ---------- кнопки ----------
 @bot.on(events.CallbackQuery())
 async def on_button(event):
